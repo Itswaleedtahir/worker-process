@@ -3,6 +3,8 @@ const env = require('dotenv');
 const express = require('express');
 const bodyParser = require('body-parser');
 const { expressjwt: jwt } = require("express-jwt");
+const axios = require('axios');
+const fs = require('fs');
 // const workerRoutes = require('./routes/worker');
 const { sequelize } = require('./models/index');
 // const { initializeWorker } = require('./worker'); // Import the initializeWorker function
@@ -182,6 +184,31 @@ redisClient.on('error', (err) => {
 
 //   console.log('Worker is running');
 
+function downloadPdfFromUrl(downloadUrl) {
+    // Generate a filename with a timestamp
+    const timestamp = new Date().toISOString().replace(/[:\-]/g, '').replace(/\..+/, '');
+    const filename = `downloadedFile_${timestamp}.pdf`;
+    const filePath = path.resolve(__dirname, 'uploads', filename);
+
+    return new Promise((resolve, reject) => {
+        axios({
+            method: 'get',
+            url: downloadUrl,
+            responseType: 'stream'
+        })
+        .then(response => {
+            const writer = fs.createWriteStream(filePath);
+            response.data.pipe(writer);
+
+            writer.on('finish', () => resolve(filePath));  // Resolves the promise with the file path
+            writer.on('error', reject);  // Rejects the promise if there's an error
+        })
+        .catch(reject);  // Rejects the promise if there's an error during download
+    });
+}
+
+
+
 async function processJobs() {
     while (true) {
         const jobData = await redisClient.lpop('pdfJobQueue');
@@ -206,6 +233,9 @@ async function processJobs() {
 
 async function processJob(job) {
     const { pdfPath, toAddress, DateReceivedEmail } = job;
+    // Example usage:
+    const filePath = await downloadPdfFromUrl(pdfPath);
+    console.log('File downloaded and saved successfully at:', filePath);
     try {
         const AccessCheck = await users.findOne({ where: { user_email: toAddress } });
         if (!AccessCheck) {
@@ -218,17 +248,17 @@ async function processJob(job) {
             try {
                 const apiUrl = 'https://gpdataservices.com/process-pdf/';
                 const logoUrl = 'https://gpdataservices.com/ext-logo/';
-                const { logo } = await logoExtraction(pdfPath, logoUrl);
-                const { data } = await pdfProcessor(pdfPath, apiUrl);
+                const { logo } = await logoExtraction(filePath, logoUrl);
+                const { data } = await pdfProcessor(filePath, apiUrl);
 
                 if (!Array.isArray(data)) {
-                    console.error("Failed to extract data for:", pdfPath);
+                    console.error("Failed to extract data for:", filePath);
                     throw new Error("Data extraction failed");
                 }
 
                 let extractedData = extractData(data, logo);
                 extractedData = cleanTestData(extractedData);
-                const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);
+                const { pdfname, destination } = await UplaodFile(filePath, extractedData);
                 const pdfURL = `${process.env.STORAGE_URL}${destination}`;
                 console.log("PDF URL:", pdfURL);
 
