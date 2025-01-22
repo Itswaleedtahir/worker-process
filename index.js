@@ -4,6 +4,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const { expressjwt: jwt } = require("express-jwt");
 const axios = require('axios');
+const Router = require("./routes/worker.js");
 const fs = require('fs');
 // const workerRoutes = require('./routes/worker');
 const { sequelize } = require('./models/index');
@@ -13,7 +14,7 @@ const { sequelize } = require('./models/index');
 env.config();
 
 const app = express();
-
+app.use("/", Router);
 
 const { users } = require("./models/index.js");
 const {
@@ -26,7 +27,16 @@ const {
   insertOrUpdateLabReport,
   logoExtraction,
 } = require("./helper/gpData.js");
+const cron = require('node-cron');
+const { fetchClientPdfCountsAndNotifyEmployees } = require('./helper/cronJobs.js'); // Adjust path accordingly
 
+
+// Schedule the task to run every minute
+// This will run at 8 AM UTC which is 3 AM EST
+cron.schedule('0 8 * * *', () => {
+  console.log('Cron job running at 3 AM EST');
+  fetchClientPdfCountsAndNotifyEmployees();
+});
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 
@@ -230,7 +240,16 @@ async function processJobs() {
         }
     }
 }
-
+async function getFileSizeInKB(bucketName, fileName) {
+  try {
+      const [metadata] = await storage.bucket(bucketName).file(fileName).getMetadata();
+      const sizeInKB = metadata.size / 1024;
+      return parseFloat(sizeInKB.toFixed(2)); // Converts size to kilobytes and rounds to two decimals
+  } catch (error) {
+      console.error(`Error retrieving file size for ${fileName}: ${error.message}`);
+      return null;
+  }
+}
 async function processJob(job) {
     const { pdfPath, toAddress, DateReceivedEmail } = job;
     // Example usage:
@@ -246,7 +265,7 @@ async function processJob(job) {
 
         if (AccessCheck.dataValues.access === 'Resume') {
             try {
-                const apiUrl = 'https://gpdataservices.com/process-pdf/';
+                const apiUrl = 'https://gpdataservices.com/parse_pdf';
                 const logoUrl = 'https://gpdataservices.com/ext-logo/';
                 const { logo } = await logoExtraction(filePath, logoUrl);
                 const { data } = await pdfProcessor(filePath, apiUrl);
@@ -261,8 +280,8 @@ async function processJob(job) {
                 const { pdfname, destination } = await UplaodFile(filePath, extractedData);
                 const pdfURL = `${process.env.STORAGE_URL}${destination}`;
                 console.log("PDF URL:", pdfURL);
-
-                const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
+                const sizeInKB = await getFileSizeInKB('gpdata01', destination); // Use your actual bucket name
+                const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress,sizeInKB);
                 await findAllLabData(extractedData, toAddress, destination, pdfEmailId);
                 const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress);
 

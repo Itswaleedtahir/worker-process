@@ -1,106 +1,51 @@
-const { users } = require("../models/index.js");
-const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile,coordinateExtraction } = require("../helper/gpData.js");
+const {
+  fetchClientPdfCountsAndNotifyEmployees
+} = require("../helper/cronJobs");
 
-const { Queue, Worker, QueueScheduler } = require('bullmq');
-const IORedis = require('ioredis');
+const {pdf_email} = require("../models/index");
+const { Storage } = require('@google-cloud/storage');
+const storage = new Storage();
 
-const redisConfig = {
-  host: 'redis-18209.c326.us-east-1-3.ec2.redns.redis-cloud.com',
-  port: 18209,
-  password: 'ZHgNfkQhZSFExZwCp52swgzqe6kQ6cKy',
-  maxRetriesPerRequest: null // Disable automatic retries
-};
-// Create a Redis client
-const redisClient = new IORedis(redisConfig);
-// Check connection status
-redisClient.on('connect', () => {
-    console.log('Redis client connected successfully.');
-  });
-  
-  redisClient.on('ready', () => {
-    console.log('Redis client is ready for use.');
-  });
-  
-  redisClient.on('error', (err) => {
-    console.error('Redis connection error:', err);
-  });
 
+async function getFileSizeInKB(bucketName, fileName) {
+  try {
+      const [metadata] = await storage.bucket(bucketName).file(fileName).getMetadata();
+      const sizeInKB = metadata.size / 1024;
+      return parseFloat(sizeInKB.toFixed(2)); // Converts size to kilobytes and rounds to two decimals
+  } catch (error) {
+      console.error(`Error retrieving file size for ${fileName}: ${error.message}`);
+      return null;
+  }
+}
 let methods = {
     worker: async(req,res)=>{
-        // // Process jobs in the queue
-const worker = new Worker('pdfProcessing', async job => {
-    const { pdfPath, toAddress, DateReceivedEmail } = job.data;
-    console.log("Processing job:", job.id, "data:", job.data);
-  
-    try {
-      const AccessCheck = await users.findOne({ where: { user_email: toAddress } });
-      if (!AccessCheck) {
-        console.log("User not found:", toAddress);
-        return;
-      }
-      console.log("AccessCheck result:", AccessCheck);
-  
-      if (AccessCheck.dataValues.access === 'Resume') {
-        const apiUrl = 'https://gpdataservices.com/process-pdf/';
-        const logoUrl = 'https://gpdataservices.com/ext-logo/';
-  
-        try {
-          const { logo } = await logoExtraction(pdfPath, logoUrl);
-          const { data } = await pdfProcessor(pdfPath, apiUrl);
-        
-          if (!Array.isArray(data)) {
-            console.error("Failed to extract data for:", pdfPath);
-            throw new Error("Data extraction failed");
-          }
-  
-          let extractedData = extractData(data, logo);
-          extractedData = cleanTestData(extractedData);
-          const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);
-          const pdfURL = `${process.env.STORAGE_URL}${destination}`;
-          console.log("PDF URL:", pdfURL);
-  
-          const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
-          await findAllLabData(extractedData, toAddress, destination, pdfEmailId);
-          const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress);
-  
-          if (message === 'Add') {
-            const { labReportId } = await labReport(datamade, pdfEmailId, toAddress);
-            const labdata = datamade.tests;
-            await labReoprtData(labdata, labReportId, pdfEmailId);
-            console.log("Process completed for job:", job.id);
-            return console.log("Process completed for job:", job.id)
-          } else {
-            console.log("Data already exists for job:", job.id);
-            return console.log("Data already exists for job:", job.id)
-          }
-        } catch (err) {
-          console.error("Error during PDF processing:", err);
-          throw err; // Fail job explicitly
-        }
-      } else if (AccessCheck.dataValues.access === 'Paused') {
-        console.log("User access is paused for:", toAddress);
-        return; // Exit early
-      } else {
-        console.log("User not found or no access for:", toAddress);
-      }
-    } catch (error) {
-      console.error('Job processing error:', error);
-    }
-  }, {
-    connection: new IORedis(redisConfig),
-    concurrency: 1 // Adjust as necessary
-  });
-  
-  
-  worker.on('completed', (job) => {
-    console.log(`Job ${job.id} has completed!`);
-  });
-  
-  worker.on('failed', (job, err) => {
-    console.error(`Job ${job.id} failed with error:`, err);
-  });
-  
+   // Await the completion of the sendNotifications function
+   const result = await fetchClientPdfCountsAndNotifyEmployees();
+   // Log the worker status
+   console.log('Worker is running');
+   // Send a JSON response with the result of sendNotifications
+   res.json({
+       status: 'success',
+       data: result
+   });
+
   console.log('Worker is running');
+    },
+    updatePdf: async(req,res)=>{
+      try {
+        const pdfs = await pdf_email.findAll();
+        for (const pdf of pdfs) {
+          const sizeInKB = await getFileSizeInKB('gpdata01', pdf.pdfPath); // Use your actual bucket name
+          if (sizeInKB !== null) {
+              await pdf.update({ fileSize: sizeInKB });
+              console.log(`Updated PDF ${pdf.id} size to ${sizeInKB} KB.`);
+          } else {
+              console.log(`Failed to get file size for PDF ${pdf.id}.`);
+          }
+        }
+    } catch (error) {
+        console.error(`Error updating PDF sizes: ${error.message}`);
+    }
     }
 }
 

@@ -51,6 +51,15 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
     }
   );
+  Signup.belongsTo(Signup, { as: 'Inviter', foreignKey: 'invitedBy', targetKey: 'user_email' });
+  Signup.hasMany(Signup, { as: 'Invitees', foreignKey: 'invitedBy', sourceKey: 'user_email' });
+  Signup.associate = function(models) {
+          // Association with labreport_data
+          Signup.hasMany(models.pdf_email, {
+      foreignKey: 'userEmailFk',
+      as: 'pdf_email'
+    });
+  };
 
   return Signup;
 };

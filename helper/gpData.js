@@ -226,7 +226,7 @@ const UploadFile = async (pdfUrl, data) => {
  * @returns {Promise<{pdfEmailId: number}>} - Returns the ID of the created PDF email record.
  * @throws {Error} - Throws an error if the operation fails, particularly if the user is not found.
  */
-const PdfEmail = async (Received, pdfname, destination, To) => {
+const PdfEmail = async (Received, pdfname, destination, To,sizeInKB) => {
   try {
     // Attempt to fetch the user based on the email provided.
     const user = await users.findOne({ where: { user_email: To } });
@@ -246,6 +246,7 @@ const PdfEmail = async (Received, pdfname, destination, To) => {
       pdfName: pdfname,
       pdfPath: destination,
       userEmailFk: userEmailFk,
+      fileSize:sizeInKB
     });
 
     // Retrieve the ID of the newly created pdf_email record.
